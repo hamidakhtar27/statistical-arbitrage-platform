@@ -62,9 +62,6 @@ The trading spread is defined as:
 
 Spread_t = y_t − β x_t
 
-yaml
-Copy code
-
 Where:
 
 - `y_t`, `x_t` = asset prices  
@@ -119,50 +116,6 @@ The dashboard enables real-time research through:
 
 ---
 
-## Project Structure
-
-statistical-arbitrage-platform/
-│
-├── app.py # Dash application (entry point)
-├── requirements.txt
-├── README.md
-│
-├── data/ # Cached production data (NO APIs in production)
-│ ├── INFY_TCS.csv
-│ ├── HDFCBANK_ICICI.csv
-│ └── RELIANCE_ONGC.csv
-│
-├── scripts/
-│ └── download_data.py # One-time Yahoo download (research only)
-│
-├── src/
-│ ├── data/
-│ │ └── loader.py
-│ ├── research/
-│ │ ├── cointegration.py
-│ │ ├── spread.py
-│ │ ├── half_life.py
-│ │ └── ou_model.py
-│ ├── strategy/
-│ │ ├── signals.py
-│ │ └── portfolio.py
-│ ├── backtest/
-│ │ ├── engine.py
-│ │ └── costs.py
-│ └── analytics/
-│ └── performance.py
-│
-└── tests/
-├── test_data.py
-├── test_cointegration.py
-├── test_strategy.py
-└── test_backtest.py
-
-yaml
-Copy code
-
----
-
 ## Production Design Choices
 
 ### Cached Local Market Data (Industry Practice)
@@ -171,8 +124,6 @@ Copy code
 - Price data stored as CSVs for reproducibility  
 - Zero external API calls in production  
 - No rate-limit or availability risk  
-
-This mirrors professional quant research demos and academic evaluation standards.
 
 ---
 
@@ -183,32 +134,6 @@ This mirrors professional quant research demos and academic evaluation standards
 
 **Start command:**
 python app.py
-
-yaml
-Copy code
-
----
-
-## Local Setup
-
-git clone https://github.com/hamidakhtar27/statistical-arbitrage-platform.git
-cd statistical-arbitrage-platform
-
-python3 -m venv venv
-source venv/bin/activate
-
-pip install -r requirements.txt
-python app.py
-
-arduino
-Copy code
-
-Then open:
-
-http://127.0.0.1:8050
-
-yaml
-Copy code
 
 ---
 
@@ -239,8 +164,6 @@ This project demonstrates:
 - Deployment and engineering maturity  
 - Research-to-production thinking  
 
-It is intentionally designed to be **interview-explainable**, **academically defensible**, and **industry-relevant**.
-
 ---
 
 ## Author
@@ -250,13 +173,6 @@ Final-year B.Tech (Computer Science & Engineering)
 Aspiring Quantitative Researcher / Trader  
 
 GitHub: https://github.com/hamidakhtar27
-If you want next, I can:
-
-Convert this into resume bullets (elite quant wording)
-
-Prepare a “walk me through this project” interview answer
-
-Plan Project #2 to complement this perfectly
 
 
 
