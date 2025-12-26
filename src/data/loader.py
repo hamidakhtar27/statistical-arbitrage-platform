@@ -1,27 +1,31 @@
-import yfinance as yf
 import pandas as pd
-import numpy as np
+from pathlib import Path
 
-def load_price_data(tickers, start="2018-01-01", end=None):
+DATA_DIR = Path("data")
+
+def load_price_data(
+    tickers,
+    pair_name,
+    use_local=True,
+    start=None,
+    end=None
+):
     """
-    Download adjusted close prices and return log prices.
-    Works correctly for single and multiple tickers.
+    Production-safe price loader.
+    Defaults to local cached CSVs.
     """
-    raw_data = yf.download(
-        tickers,
-        start=start,
-        end=end,
-        auto_adjust=False,
-        progress=False
-    )
 
-    # Extract Adjusted Close safely
-    if isinstance(raw_data.columns, pd.MultiIndex):
-        adj_close = raw_data["Adj Close"]
-    else:
-        adj_close = raw_data[["Adj Close"]]
+    if use_local:
+        file_path = DATA_DIR / f"{pair_name}.csv"
 
-    adj_close = adj_close.dropna()
-    log_prices = np.log(adj_close)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Missing local data file: {file_path}")
 
-    return log_prices
+        df = pd.read_csv(file_path, index_col=0, parse_dates=True)
+        df = df[tickers].dropna()
+        return df
+
+    # Research-only fallback
+    import yfinance as yf
+    df = yf.download(tickers, start=start, end=end)["Adj Close"]
+    return df.dropna()

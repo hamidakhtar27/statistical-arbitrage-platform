@@ -1,171 +1,123 @@
-import dash
-from dash import dcc, html
-from dash.dependencies import Input, Output
+import os
+from pathlib import Path
+
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# ================================
-# CORE LOGIC IMPORTS
-# ================================
-from src.data.loader import load_price_data
+from dash import Dash, dcc, html, Input, Output
+from dash.exceptions import PreventUpdate
+
 from src.research.cointegration import engle_granger_test
 from src.research.spread import compute_spread
-from src.strategy.signals import compute_zscore
-from src.strategy.portfolio import generate_positions
-from src.backtest.costs import apply_transaction_costs
-from src.backtest.engine import backtest_spread_strategy
+from src.strategy.signals import generate_signals
+from src.strategy.portfolio import backtest_portfolio
 from src.analytics.performance import compute_performance_metrics
 
 # ================================
-# APP
+# DASH APP
 # ================================
-app = dash.Dash(__name__)
-app.title = "Statistical Arbitrage Research Platform"
-
-# ================================
-# COLOR SYSTEM (REFINED)
-# ================================
-BG = "#0b1220"
-CARD = "#0f172a"
-TEXT = "#e5e7eb"
-
-SPREAD = "#60a5fa"
-LONG = "#22c55e"
-SHORT = "#ef4444"
-
-ZSCORE = "#9ca3af"
-BAND = "#475569"
-ZERO = "#64748b"
-
-EQUITY = "#22c55e"
-DRAWDOWN = "#fb7185"
-
-GRID = "#1e293b"
-CAPTION = "#94a3b8"
+app = Dash(__name__)
+server = app.server
 
 # ================================
-# PIPELINE
+# LOCAL DATA
 # ================================
-def run_pipeline(a, b, entry_z, exit_z, window):
-    prices = load_price_data([a, b])
-    y, x = prices[a], prices[b]
+DATA_DIR = Path("data")
 
-    beta = engle_granger_test(y, x)["hedge_ratio"]
-    spread = compute_spread(y, x, beta)
-    z = compute_zscore(spread, window)
-    pos = generate_positions(z, entry_z, exit_z)
+PAIRS = {
+    "INFY_TCS": DATA_DIR / "INFY_TCS.csv",
+    "HDFCBANK_ICICI": DATA_DIR / "HDFCBANK_ICICI.csv",
+    "RELIANCE_ONGC": DATA_DIR / "RELIANCE_ONGC.csv",
+}
 
-    costs = apply_transaction_costs(pos)
-    res = backtest_spread_strategy(spread, pos, costs)
-    metrics = compute_performance_metrics(res["equity"], res["net_pnl"])
+PRICE_DATA = {}
 
-    equity = res["equity"]
-    drawdown = equity - equity.cummax()
+for key, path in PAIRS.items():
+    if not path.exists():
+        raise RuntimeError(f"Missing data file: {path}")
 
-    pc = pos.diff()
-    long_e = spread[pc == 1]
-    short_e = spread[pc == -1]
-    exits = spread[(pc.abs() == 1) & (pos == 0)]
+    df = pd.read_csv(path, index_col=0, parse_dates=True)
 
-    return beta, spread, z, equity, drawdown, metrics, long_e, short_e, exits
+    if df.empty:
+        raise RuntimeError(f"Empty data file: {path}")
+
+    PRICE_DATA[key] = df.dropna()
+
+# ================================
+# HEDGE RATIO EXTRACTOR
+# ================================
+def extract_hedge_ratio(result):
+    if isinstance(result, dict) and "hedge_ratio" in result:
+        return float(result["hedge_ratio"])
+    if isinstance(result, (tuple, list)):
+        return float(result[0])
+    if hasattr(result, "hedge_ratio"):
+        return float(result.hedge_ratio)
+    raise ValueError("Cannot extract hedge ratio")
 
 # ================================
 # LAYOUT
 # ================================
 app.layout = html.Div(
-    style={"backgroundColor": BG, "height": "100vh", "padding": "20px"},
+    style={
+        "backgroundColor": "#0b1220",
+        "minHeight": "100vh",
+        "padding": "20px",
+        "color": "#e5e7eb",
+        "fontFamily": "Arial"
+    },
     children=[
 
-        html.H2(
-            "Statistical Arbitrage Research Platform",
-            style={"color": TEXT, "marginBottom": "20px"}
-        ),
+        html.H2("Statistical Arbitrage Research Platform"),
 
-        html.Div(
-            style={"display": "flex", "gap": "20px"},
+        html.Div(style={"display": "flex", "gap": "20px"}, children=[
 
-            children=[
+            # ===== SIDEBAR =====
+            html.Div(
+                style={
+                    "width": "22%",
+                    "backgroundColor": "#0f172a",
+                    "padding": "20px",
+                    "borderRadius": "10px"
+                },
+                children=[
+                    html.Label("Asset Pair"),
+                    dcc.Dropdown(
+                        id="pair",
+                        options=[
+                            {"label": k.replace("_", " – "), "value": k}
+                            for k in PAIRS
+                        ],
+                        value="INFY_TCS",
+                        clearable=False
+                    ),
 
-                # ===== LEFT SIDEBAR =====
-                html.Div(
-                    style={
-                        "width": "22%",
-                        "backgroundColor": CARD,
-                        "padding": "20px",
-                        "borderRadius": "12px"
-                    },
-                    children=[
+                    html.Br(),
+                    html.Label("Entry Z"),
+                    dcc.Slider(1.5, 3.0, 0.1, value=2.0, id="entry_z"),
 
-                        html.Label("Asset Pair", style={"color": TEXT}),
-                        dcc.Dropdown(
-                            id="pair",
-                            options=[
-                                {"label": "INFY – TCS", "value": "INFY.NS|TCS.NS"},
-                                {"label": "HDFCBANK – ICICIBANK", "value": "HDFCBANK.NS|ICICIBANK.NS"},
-                                {"label": "RELIANCE – ONGC", "value": "RELIANCE.NS|ONGC.NS"},
-                                {"label": "SBIN – AXISBANK", "value": "SBIN.NS|AXISBANK.NS"},
-                                {"label": "LT – ULTRACEMCO", "value": "LT.NS|ULTRACEMCO.NS"},
-                            ],
-                            value="INFY.NS|TCS.NS",
-                            clearable=False
-                        ),
+                    html.Br(),
+                    html.Label("Exit Z"),
+                    dcc.Slider(0.2, 1.0, 0.1, value=0.5, id="exit_z"),
 
-                        html.Br(),
+                    html.Br(),
+                    html.Label("Rolling Window"),
+                    dcc.Slider(30, 120, 10, value=60, id="window"),
 
-                        html.Label("Entry Z", style={"color": TEXT}),
-                        dcc.Slider(1.5, 3.0, 0.1, value=2.0, id="entry"),
+                    html.Hr(),
+                    html.Div(id="metrics")
+                ]
+            ),
 
-                        html.Br(),
-
-                        html.Label("Exit Z", style={"color": TEXT}),
-                        dcc.Slider(0.2, 1.0, 0.1, value=0.5, id="exit"),
-
-                        html.Br(),
-
-                        html.Label("Rolling Window", style={"color": TEXT}),
-                        dcc.Slider(30, 120, 10, value=60, id="window"),
-
-                        html.Hr(style={"borderColor": GRID}),
-
-                        html.Div(id="metrics", style={"color": TEXT})
-                    ]
-                ),
-
-                # ===== MAIN CONTENT =====
-                html.Div(
-                    style={"width": "78%"},
-                    children=[
-
-                        dcc.Tabs([
-
-                            dcc.Tab(
-                                label="Spread & Z-Score",
-                                children=[
-                                    dcc.Graph(id="spread-graph"),
-                                    html.P(
-                                        "Cointegrated spread with long/short trade markers (top) "
-                                        "and corresponding Z-score with ±2 entry thresholds (bottom).",
-                                        style={"color": CAPTION, "fontSize": "13px", "marginTop": "6px"}
-                                    )
-                                ]
-                            ),
-
-                            dcc.Tab(
-                                label="Performance",
-                                children=[
-                                    dcc.Graph(id="equity-graph"),
-                                    html.P(
-                                        "Cumulative equity curve (top) and drawdown relative to rolling peak (bottom).",
-                                        style={"color": CAPTION, "fontSize": "13px", "marginTop": "6px"}
-                                    )
-                                ]
-                            )
-
-                        ])
-                    ]
-                )
-            ]
-        )
+            # ===== MAIN =====
+            html.Div(style={"width": "78%"}, children=[
+                dcc.Tabs([
+                    dcc.Tab(label="Spread & Z-Score", children=[dcc.Graph(id="spread_graph")]),
+                    dcc.Tab(label="Performance", children=[dcc.Graph(id="equity_graph")])
+                ])
+            ])
+        ])
     ]
 )
 
@@ -173,90 +125,89 @@ app.layout = html.Div(
 # CALLBACK
 # ================================
 @app.callback(
-    Output("spread-graph", "figure"),
-    Output("equity-graph", "figure"),
+    Output("spread_graph", "figure"),
+    Output("equity_graph", "figure"),
     Output("metrics", "children"),
     Input("pair", "value"),
-    Input("entry", "value"),
-    Input("exit", "value"),
+    Input("entry_z", "value"),
+    Input("exit_z", "value"),
     Input("window", "value"),
 )
-def update(pair, entry, exit, window):
-    a, b = pair.split("|")
-    beta, spread, z, equity, dd, m, L, S, E = run_pipeline(a, b, entry, exit, window)
+def update_dashboard(pair, entry_z, exit_z, window):
 
-    # ---------- SPREAD + Z-SCORE ----------
-    f1 = make_subplots(rows=2, cols=1, shared_xaxes=True)
+    if pair not in PRICE_DATA:
+        raise PreventUpdate
 
-    f1.add_trace(go.Scatter(x=spread.index, y=spread,
-                            line=dict(color=SPREAD, width=1.6),
-                            name="Spread"), 1, 1)
+    prices = PRICE_DATA[pair]
 
-    f1.add_trace(go.Scatter(x=L.index, y=L,
-                            mode="markers",
-                            marker=dict(color=LONG, symbol="triangle-up", size=8),
-                            name="Long"), 1, 1)
+    if window >= len(prices):
+        raise PreventUpdate
 
-    f1.add_trace(go.Scatter(x=S.index, y=S,
-                            mode="markers",
-                            marker=dict(color=SHORT, symbol="triangle-down", size=8),
-                            name="Short"), 1, 1)
+    y, x = prices.iloc[:, 0], prices.iloc[:, 1]
 
-    f1.add_trace(go.Scatter(x=z.index, y=z,
-                            line=dict(color=ZSCORE, width=1.2),
-                            name="Z-Score"), 2, 1)
+    result = engle_granger_test(y, x)
+    hedge_ratio = extract_hedge_ratio(result)
 
-    for lvl in [2, -2]:
-        f1.add_hline(y=lvl, row=2,
-                     line_dash="dot",
-                     line_color=BAND,
-                     line_width=1)
+    spread = compute_spread(y, x, hedge_ratio)
+    zscore = (spread - spread.rolling(window).mean()) / spread.rolling(window).std()
+    zscore = zscore.dropna()
 
-    f1.add_hline(y=0, row=2, line_color=ZERO, line_width=1)
+    signals = generate_signals(zscore, entry_z, exit_z)
 
-    f1.update_layout(
-        template="plotly_dark",
-        height=720,
-        plot_bgcolor=CARD,
-        paper_bgcolor=CARD
+    prices = prices.loc[zscore.index]
+    spread = spread.loc[zscore.index]
+    signals = signals.loc[zscore.index]
+
+    portfolio = backtest_portfolio(prices, spread, signals)
+
+    metrics = compute_performance_metrics(
+        portfolio["equity_curve"],
+        portfolio["pnl"]
     )
 
-    f1.update_xaxes(gridcolor=GRID)
-    f1.update_yaxes(gridcolor=GRID)
-
-    # ---------- EQUITY + DRAWDOWN ----------
-    f2 = make_subplots(rows=2, cols=1, shared_xaxes=True)
-
-    f2.add_trace(go.Scatter(x=equity.index, y=equity,
-                            line=dict(color=EQUITY, width=1.6),
-                            name="Equity"), 1, 1)
-
-    f2.add_trace(go.Scatter(x=dd.index, y=dd,
-                            fill="tozeroy",
-                            line=dict(color=DRAWDOWN, width=1.2),
-                            name="Drawdown"), 2, 1)
-
-    f2.update_layout(
-        template="plotly_dark",
-        height=640,
-        plot_bgcolor=CARD,
-        paper_bgcolor=CARD
+    # ===== Spread & Z-Score =====
+    f1 = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        subplot_titles=("Cointegrated Spread", "Z-Score")
     )
 
-    f2.update_xaxes(gridcolor=GRID)
-    f2.update_yaxes(gridcolor=GRID)
+    f1.add_trace(go.Scatter(x=spread.index, y=spread, name="Spread", line=dict(color="#60a5fa")), 1, 1)
+    f1.add_trace(go.Scatter(x=zscore.index, y=zscore, name="Z-Score", line=dict(color="#f97316")), 2, 1)
 
-    metrics = [
-        html.P(f"Hedge Ratio: {beta:.3f}"),
-        html.P(f"Sharpe: {m['Sharpe Ratio']:.2f}"),
-        html.P(f"Max DD: {m['Max Drawdown']:.2%}"),
-        html.P(f"Return: {m['Total Return']:.2f}")
+    for lvl in [entry_z, -entry_z]:
+        f1.add_hline(y=lvl, row=2, line_dash="dot", line_color="#64748b")
+
+    f1.add_hline(y=0, row=2, line_color="#94a3b8")
+
+    f1.update_layout(template="plotly_dark", height=700)
+
+    # ===== Performance =====
+    f2 = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        subplot_titles=("Equity Curve", "Drawdown")
+    )
+
+    f2.add_trace(go.Scatter(x=portfolio.index, y=portfolio["equity_curve"],
+                            name="Equity", line=dict(color="#22c55e")), 1, 1)
+
+    f2.add_trace(go.Scatter(x=portfolio.index, y=portfolio["drawdown"],
+                            name="Drawdown", fill="tozeroy",
+                            line=dict(color="#fb7185")), 2, 1)
+
+    f2.update_layout(template="plotly_dark", height=650)
+
+    metrics_block = [
+        html.P(f"Hedge Ratio: {hedge_ratio:.3f}"),
+        html.P(f"Sharpe Ratio: {metrics['Sharpe Ratio']:.2f}"),
+        html.P(f"Max Drawdown: {metrics['Max Drawdown']:.2%}"),
+        html.P(f"Total Return: {metrics['Total Return']:.2%}")
     ]
 
-    return f1, f2, metrics
+    return f1, f2, metrics_block
 
 # ================================
 # RUN
 # ================================
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 8050))
+    app.run(host="0.0.0.0", port=port, debug=False)
