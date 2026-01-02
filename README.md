@@ -170,9 +170,8 @@ This project demonstrates:
 
 **Mohd Hamid Akhtar Khan**  
 Final-year B.Tech (Computer Science & Engineering)  
-Aspiring Quantitative Researcher / Trader  
+Quantitative Finance & Risk Analytics  
 
-GitHub: https://github.com/hamidakhtar27
 
 
 
